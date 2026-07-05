@@ -71,8 +71,10 @@ FAMILY_MAP = {
 # Agent 执行器
 # ============================================================
 
-def run_codex(task: str, workdir: str, model: str = "gpt-5-codex") -> dict:
-    """通过 Codex CLI 执行编码任务"""
+def run_codex(task: str, workdir: str, model: str = "gpt-5.5") -> dict:
+    """通过 Codex CLI 执行编码任务 (需要桌面端会员 + 可用模型)"""
+    # 注意: Codex CLI headless 模式受账号类型限制
+    # ChatGPT 账号可能不支持某些模型, 此时回退到 MiniMax 或 DeepSeek
     prompt = f"""你是一个高效的编码 Agent。请完成以下任务。
 
 任务：
@@ -91,10 +93,11 @@ def run_codex(task: str, workdir: str, model: str = "gpt-5-codex") -> dict:
 """
     try:
         result = subprocess.run(
-            ["codex", "exec", "--model", model, "--json", prompt],
+            ["codex", "exec", "-m", model, "--skip-git-repo-check"],
             cwd=workdir,
             capture_output=True,
             text=True,
+            input=prompt,
             timeout=600,
         )
         output = result.stdout or result.stderr

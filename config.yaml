@@ -25,9 +25,9 @@ routing:
 
   # 实现阶段
   implement:
-    primary: openai       # Codex 会员已付，¥0 边际成本
-    secondary: deepseek   # 便宜，中文好
-    tertiary: minimax     # Token Plan 已付
+    primary: deepseek     # DeepSeek V4, 极低API成本, headless可用
+    secondary: minimax    # Token Plan 已付, headless可用
+    fallback: openai      # Codex CLI (headless受限, 桌面端交互优先)
 
   # 审查阶段: 强制 reviewer.family != author.family
   review:
