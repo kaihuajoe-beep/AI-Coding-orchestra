@@ -1,0 +1,56 @@
+# {{项目名称}} — Claude Code 项目规范
+
+## AI 编排中台
+
+本项目已接入 AI Coding 编排中台 (github.com/kaihuajoe-beep/ai-coding-orchestra)
+
+### 触发词 (说以下任意一句即可启动多模型协作)
+
+- "完整实现/开发/做一个XXX" → 全流程开发
+- "重构/改造XXX" → 模块重构
+- "帮我开发/帮我写XXX" → 功能开发
+- "巡检/扫描项目" → 代码巡检
+- "修这个Bug" → 自动修复
+
+### 快捷命令
+
+```
+/o full <需求>    — 全流程 (规划→编码→审查→验证→交付)
+/o plan <需求>    — 仅规划
+/o build          — 仅编码
+/o review         — 仅审查
+/o patrol daily   — 每日巡检
+```
+
+### 模型阵容
+
+| 模型 | 职责 | 成本 |
+|------|------|------|
+| Codex (GPT-5) | 超主力编码 | ¥0 |
+| DeepSeek V4 | 溢出编码+中文 | ~¥1/1M tok |
+| MiniMax M3 | 交叉审查+对抗验证 | ¥119/月 |
+| Claude (CC Switch) | 规划+合成 | ~¥20-50/月 |
+
+## 项目类型
+
+- 类型: web-fullstack | backend-service | cli-tool | library
+- 语言: typescript | python | go | rust
+- 框架: next.js | fastapi | django | express
+- 测试: `npm test` | `pytest` | `go test`
+
+## Git 规范
+
+- 分支: feat/描述 | fix/描述 | refactor/描述
+- Commit: Conventional Commits (type(scope): description)
+- PR 基础分支: develop
+
+## 架构约束
+
+```
+src/        # 源码
+tests/      # 测试
+docs/       # 文档
+```
+
+- 禁止循环依赖
+- 公共 API 变更需更新文档

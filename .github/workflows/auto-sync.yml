@@ -1,0 +1,37 @@
+name: 🔄 自动同步
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 同步 Skills 到本地
+        run: |
+          echo "## 🎯 Skills 同步指引" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "你的 AI Coding 编排中台 Skills 位于本仓库的 starter-kit/ 目录。" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 首次部署" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'git clone https://github.com/kaihuajoe-beep/ai-coding-orchestra.git' >> $GITHUB_STEP_SUMMARY
+          echo 'cp -r ai-coding-orchestra/starter-kit/.github 你的项目/' >> $GITHUB_STEP_SUMMARY
+          echo 'cp ai-coding-orchestra/starter-kit/CLAUDE.md.template 你的项目/CLAUDE.md' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 后续更新" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo 'cd ai-coding-orchestra && git pull' >> $GITHUB_STEP_SUMMARY
+          echo 'cp -r starter-kit/.github 你的项目/' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: 自动更新本地克隆
+        if: github.event_name == 'push'
+        run: |
+          echo "仓库已更新: ${{ github.event.head_commit.message }}"
+          echo "提交: ${{ github.sha }}"
