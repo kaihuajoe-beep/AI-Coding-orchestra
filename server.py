@@ -27,9 +27,11 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from orchestra.moa import Agent, MoAOrchestrator, MoARequest
+
 # 服务启动时间和版本
 _start_time = time.time()
-VERSION = "1.0.0"
+VERSION = "2.0.0"
 
 # ============================================================
 # 成本追踪
@@ -126,6 +128,36 @@ def run_codex(task: str, workdir: str, model: str = "gpt-5.5") -> dict:
         }
 
 
+def run_codex_readonly(task: str, workdir: str, model: str = "gpt-5-codex") -> dict:
+    """Run Codex as a read-only MoA analyst; it cannot mutate the worktree."""
+    try:
+        result = subprocess.run(
+            [
+                "codex", "exec", "-m", model, "--sandbox", "read-only",
+                "--skip-git-repo-check",
+            ],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            input=task,
+            timeout=600,
+        )
+        output = result.stdout or result.stderr
+        _track_cost("codex-moa", model, 0, 0, 0)
+        return {
+            "success": result.returncode == 0,
+            "agent": "codex",
+            "family": "openai",
+            "model": model,
+            "output": output[:16000],
+            "cost_rmb": 0,
+        }
+    except FileNotFoundError:
+        return {"success": False, "agent": "codex", "error": "Codex CLI 未安装"}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "agent": "codex", "error": "Codex 只读分析超时"}
+
+
 def run_deepseek(task: str, workdir: str, model: str = "deepseek-v4-pro") -> dict:
     """通过 DeepSeek API 执行编码任务 (OpenAI 兼容接口)"""
     api_key = os.environ.get("DEEPSEEK_API_KEY")
@@ -205,6 +237,7 @@ def run_minimax(task: str, workdir: str, mode: str = "code", model: str = "MiniM
     import requests
 
     system_prompts = {
+        "analysis": "你是 MoA 只读分析与评审 Agent。严格遵守用户要求，不修改仓库，不声称执行过未执行的操作。",
         "code": "你是一个高效的 AI 编码 Agent。请完成用户的编码任务。返回变更摘要、代码、测试状态和信心度。用中文回复。",
         "review": """你是资深代码审查专家。请严格审查以下代码。
 
@@ -372,10 +405,54 @@ def run_openrouter_fallback(task: str, workdir: str) -> dict:
 # MCP Server 主循环
 # ============================================================
 
+def build_moa_orchestrator() -> MoAOrchestrator:
+    """Build the MoA roster from providers that are actually configured."""
+    agents: list[Agent] = []
+    if shutil.which("codex"):
+        agents.append(Agent("codex", "openai", run_codex_readonly))
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        agents.append(Agent("deepseek", "deepseek", run_deepseek))
+    if os.environ.get("MINIMAX_API_KEY"):
+        agents.append(
+            Agent(
+                "minimax",
+                "minimax",
+                lambda task, workdir: run_minimax(task, workdir, mode="analysis"),
+            )
+        )
+    if os.environ.get("OPENROUTER_API_KEY"):
+        agents.append(Agent("openrouter", "anthropic", run_openrouter_fallback))
+    return MoAOrchestrator(agents)
+
+
+def run_moa(arguments: dict[str, Any]) -> dict[str, Any]:
+    request = MoARequest(
+        task=arguments["task"],
+        workdir=arguments["workdir"],
+        candidate_count=int(arguments.get("candidate_count", 3)),
+        reviews_per_candidate=int(arguments.get("reviews_per_candidate", 2)),
+        max_cost_rmb=float(arguments.get("max_cost_rmb", 10.0)),
+        synthesizer=arguments.get("synthesizer"),
+    )
+    return build_moa_orchestrator().run(request)
+
 def handle_request(req: dict) -> dict:
     """处理 MCP JSON-RPC 请求"""
     req_id = req.get("id")
     method = req.get("method")
+
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "ai-coding-orchestra", "version": VERSION},
+            },
+        }
+    if method in {"notifications/initialized", "notifications/cancelled"}:
+        return None
 
     # ---- tools/list ----
     if method == "tools/list":
@@ -384,6 +461,28 @@ def handle_request(req: dict) -> dict:
             "id": req_id,
             "result": {
                 "tools": [
+                    {
+                        "name": "moa_orchestrate",
+                        "description": "运行只读 Mixture-of-Agents 协作：多家族并行提案、"
+                                       "跨家族证据评审、稳健评分和可选合成。"
+                                       "输出可审计决策包，不直接修改仓库。",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "task": {"type": "string", "description": "需要协作分析的编码任务"},
+                                "workdir": {"type": "string", "description": "项目工作目录绝对路径"},
+                                "candidate_count": {"type": "integer", "minimum": 2, "maximum": 8, "default": 3},
+                                "reviews_per_candidate": {"type": "integer", "minimum": 1, "maximum": 4, "default": 2},
+                                "max_cost_rmb": {"type": "number", "exclusiveMinimum": 0, "default": 10},
+                                "synthesizer": {
+                                    "type": "string",
+                                    "enum": ["codex", "deepseek", "minimax", "openrouter"],
+                                    "description": "可选合成 Agent；未指定时采用最高分方案",
+                                },
+                            },
+                            "required": ["task", "workdir"],
+                        },
+                    },
                     {
                         "name": "codex_execute",
                         "description": "调用 Codex CLI (GPT-5-Codex) 执行编码任务。"
@@ -507,7 +606,9 @@ def handle_request(req: dict) -> dict:
         workdir = arguments.get("workdir", os.getcwd())
 
         try:
-            if tool_name == "codex_execute":
+            if tool_name == "moa_orchestrate":
+                result = run_moa(arguments)
+            elif tool_name == "codex_execute":
                 result = run_codex(arguments["task"], workdir, arguments.get("model", "gpt-5-codex"))
             elif tool_name == "deepseek_execute":
                 result = run_deepseek(arguments["task"], workdir, arguments.get("model", "deepseek-v4-pro"))
@@ -536,7 +637,7 @@ def handle_request(req: dict) -> dict:
                 else:
                     providers["minimax"] = {"status": "unavailable", "family": "minimax"}
                 if os.environ.get("OPENROUTER_API_KEY"):
-                    providers["openrouter"] = {"status": "available", "family": "openrouter", "method": "api"}
+                    providers["openrouter"] = {"status": "available", "family": "anthropic", "method": "api"}
                 available = sum(1 for p in providers.values() if p["status"] == "available")
                 mode = "full" if available >= 3 else ("standard" if available >= 2 else "minimal")
                 result = {"providers": providers, "mode": mode, "available_count": available, "success": True}
@@ -601,6 +702,8 @@ def main():
                 break
             request = json.loads(line.strip())
             response = handle_request(request)
+            if response is None:
+                continue
             sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
             sys.stdout.flush()
         except json.JSONDecodeError:
