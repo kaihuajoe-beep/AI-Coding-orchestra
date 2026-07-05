@@ -476,6 +476,18 @@ def handle_request(req: dict) -> dict:
                         "inputSchema": {"type": "object", "properties": {}, "required": []},
                     },
                     {
+                        "name": "detect_providers",
+                        "description": "检测当前可用的模型 Provider。自动扫描 Codex CLI、DeepSeek API Key、"
+                                       "MiniMax API Key、OpenRouter API Key 的可用性。"
+                                       "返回: 各 Provider 状态 + 可用家族数 + 运行模式(full/standard/minimal)。"
+                                       "用途: 在启动编排前调用，确定当前可用的模型矩阵。",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {},
+                            "required": [],
+                        },
+                    },
+                    {
                         "name": "cost_report",
                         "description": "查询当前会话的模型使用成本和统计。"
                                        "返回: 各模型调用次数、Token 用量、费用合计。",

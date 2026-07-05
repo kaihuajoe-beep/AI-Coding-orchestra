@@ -1,0 +1,92 @@
+name: 📊 每周深度巡检
+
+on:
+  schedule:
+    - cron: '0 1 * * 1'  # 每周一 UTC 1:00 = 北京时间 9:00
+  workflow_dispatch:
+
+jobs:
+  weekly-deep-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 每周深度巡检
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          echo "# 📊 每周深度巡检 — $(date +%Y-%m-%d)" > weekly-report.md
+          echo "" >> weekly-report.md
+
+          # 1. 技术债追踪
+          echo "### 📋 技术债" >> weekly-report.md
+          echo "\`\`\`" >> weekly-report.md
+          grep -rn "TODO\|FIXME\|HACK\|XXX\|WORKAROUND" --include="*.ts" --include="*.js" --include="*.py" --include="*.go" --include="*.java" . 2>/dev/null | head -50 >> weekly-report.md || echo "无标记的技术债" >> weekly-report.md
+          echo "\`\`\`" >> weekly-report.md
+          TODO_COUNT=$(grep -rn "TODO\|FIXME\|HACK" --include="*.ts" --include="*.js" --include="*.py" . 2>/dev/null | wc -l)
+          echo "技术债标记总数: $TODO_COUNT" >> weekly-report.md
+          echo "" >> weekly-report.md
+
+          # 2. 未审查PR
+          echo "### 👀 未审查PR" >> weekly-report.md
+          gh pr list --state open --json title,createdAt,url,author 2>/dev/null | \
+            python3 -c "
+import sys, json
+from datetime import datetime, timezone
+prs = json.load(sys.stdin)
+old = [p for p in prs if (datetime.now(timezone.utc) - datetime.fromisoformat(p['createdAt'].replace('Z','+00:00'))).days > 2]
+for p in old:
+    print(f\"- [{p['title']}]({p['url']}) — {p['author']['login']} — {(datetime.now(timezone.utc)-datetime.fromisoformat(p['createdAt'].replace('Z','+00:00'))).days}天前\")
+if not old:
+    print('✅ 无超过2天未审查的PR')
+" >> weekly-report.md 2>/dev/null || echo "gh CLI未配置" >> weekly-report.md
+          echo "" >> weekly-report.md
+
+          # 3. 依赖更新
+          echo "### 📦 依赖更新" >> weekly-report.md
+          if [ -f package.json ]; then
+            npm outdated 2>/dev/null >> weekly-report.md || echo "无过期依赖" >> weekly-report.md
+          elif [ -f requirements.txt ]; then
+            pip list --outdated 2>/dev/null >> weekly-report.md || echo "pip未安装" >> weekly-report.md
+          fi
+          echo "" >> weekly-report.md
+
+          # 4. 代码统计
+          echo "### 📈 代码统计" >> weekly-report.md
+          echo "\`\`\`" >> weekly-report.md
+          git log --since="7 days ago" --oneline | wc -l | xargs echo "本周提交:" >> weekly-report.md
+          git log --since="7 days ago" --format='%aN' | sort | uniq -c | sort -rn | head -5 >> weekly-report.md
+          echo "\`\`\`" >> weekly-report.md
+
+          # 5. 重复代码检测
+          echo "### 🔄 重复代码" >> weekly-report.md
+          if command -v jscpd &> /dev/null; then
+            jscpd --min-lines 10 --min-tokens 50 . 2>/dev/null >> weekly-report.md
+          else
+            echo "jscpd 未安装 (可选: npm install -g jscpd)" >> weekly-report.md
+          fi
+
+          cat weekly-report.md
+
+      - name: 创建改进Issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TODO_COUNT=$(grep -rn "TODO\|FIXME\|HACK" --include="*.ts" --include="*.js" --include="*.py" . 2>/dev/null | wc -l)
+          if [ "$TODO_COUNT" -gt 20 ]; then
+            gh issue create \
+              --title "📋 技术债追踪 — 发现 $TODO_COUNT 个待处理项" \
+              --body "本周技术债: $TODO_COUNT 个 TODO/FIXME/HACK 标记。详见 $(cat weekly-report.md | head -100)" \
+              --label "orchestra-patrol,tech-debt,p2"
+          fi
+
+      - name: 上传报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-report-$(date +%Y%m%d)
+          path: weekly-report.md
