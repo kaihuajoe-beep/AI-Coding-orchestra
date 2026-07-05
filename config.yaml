@@ -16,6 +16,23 @@ families:
     models: [claude-sonnet-5, claude-opus-4-8]
     default: claude-sonnet-5
 
+# Mixture-of-Agents: 提案与评审阶段默认只读，禁止并发修改同一工作树。
+moa:
+  candidate_count: 3
+  reviews_per_candidate: 2
+  min_distinct_families: 2
+  max_parallel_calls: 8
+  max_context_chars: 40000
+  max_cost_rmb: 10
+  scoring:
+    strategy: median_with_evidence
+    evidence_bonus_max: 5
+    reject_penalty: 10
+  delivery:
+    auto_apply: false
+    require_tests: true
+    require_human_approval: true
+
 # 路由规则
 routing:
   # 规划阶段
