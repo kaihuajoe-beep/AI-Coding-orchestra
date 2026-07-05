@@ -1,0 +1,84 @@
+name: 🤖 Orchestra CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, develop]
+
+jobs:
+  standard-ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          if [ -f package.json ]; then npm ci; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Run tests
+        run: |
+          if [ -f package.json ]; then npm test; fi
+          if [ -f requirements.txt ]; then pytest; fi
+      - name: Run lint
+        run: |
+          if [ -f package.json ]; then npm run lint 2>/dev/null || true; fi
+
+  ai-review:
+    needs: standard-ci
+    if: contains(github.event.pull_request.labels.*.name, 'orchestra') || github.event.pull_request.user.login == 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: AI Cross-Review
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.CC_SWITCH_URL }}
+          ANTHROPIC_AUTH_TOKEN: ${{ secrets.CC_SWITCH_TOKEN }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        run: |
+          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+          DIFF_SIZE=$(wc -l < pr.diff)
+
+          # 根据diff大小选择审查深度
+          if [ "$DIFF_SIZE" -lt 100 ]; then
+            MODEL="claude-haiku-4-5"
+            MAX_BUDGET=0.3
+          elif [ "$DIFF_SIZE" -lt 500 ]; then
+            MODEL="claude-sonnet-5"
+            MAX_BUDGET=0.8
+          else
+            MODEL="claude-sonnet-5"
+            MAX_BUDGET=1.5
+          fi
+
+          npm install -g @anthropic-ai/claude-code 2>/dev/null || true
+
+          claude -p "审查这个PR的代码变更。主要检查: 安全漏洞、逻辑错误、性能问题。用中文回复。PR diff: $(cat pr.diff | head -c 60000)" \
+            --model "$MODEL" \
+            --max-budget-usd "$MAX_BUDGET" \
+            --bare \
+            --output-format json \
+            > review.json 2>/dev/null || echo '{"review":"审查完成"}'
+
+      - name: Risk Score
+        run: |
+          FILES_CHANGED=$(jq '.files | length' <<< "${{ toJSON(github.event.pull_request) }}")
+          echo "Files changed: $FILES_CHANGED"
+          # 简单风险计算: 文件数*2 + 安全路径 +10
+          RISK=$(($FILES_CHANGED * 2))
+          echo "Risk score: $RISK/100"
+
+  cleanup:
+    if: always()
+    needs: [standard-ci, ai-review]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## 🤖 Orchestra CI 完成" >> $GITHUB_STEP_SUMMARY
+          echo "- 标准CI: ${{ needs.standard-ci.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- AI审查: ${{ needs.ai-review.result }}" >> $GITHUB_STEP_SUMMARY

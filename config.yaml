@@ -1,0 +1,57 @@
+# MCP Model Router 配置
+# AI Coding 编排中台 — 多模型路由
+
+# 模型家族定义 (用于交叉审查强制跨家族)
+families:
+  openai:
+    models: [gpt-5-codex]
+    default: gpt-5-codex
+  deepseek:
+    models: [deepseek-v4-pro, deepseek-v4-flash]
+    default: deepseek-v4-pro
+  minimax:
+    models: [MiniMax-M3]
+    default: MiniMax-M3
+  anthropic:
+    models: [claude-sonnet-5, claude-opus-4-8]
+    default: claude-sonnet-5
+
+# 路由规则
+routing:
+  # 规划阶段
+  plan:
+    agent: anthropic
+    reason: "Claude 推理最强，规划质量决定全局"
+
+  # 实现阶段
+  implement:
+    primary: openai       # Codex 会员已付，¥0 边际成本
+    secondary: deepseek   # 便宜，中文好
+    tertiary: minimax     # Token Plan 已付
+
+  # 审查阶段: 强制 reviewer.family != author.family
+  review:
+    rule: "cross_family"
+    quorum: 0.67          # ≥2/3 通过
+    max_reviewers: 3      # 每个实现最多被 3 方审查
+
+  # 对抗验证
+  adversarial:
+    primary: minimax      # 对抗思维强
+    secondary: deepseek
+
+  # 合成
+  synthesize:
+    agent: anthropic
+
+  # 巡检
+  patrol_daily:
+    agent: deepseek       # 轻量扫描用便宜模型
+  patrol_weekly:
+    agent: anthropic      # 深度分析需要强推理
+
+# 预算控制
+budget:
+  max_per_task_rmb: 50
+  openrouter_max_per_call_usd: 5
+  daily_limit_rmb: 200

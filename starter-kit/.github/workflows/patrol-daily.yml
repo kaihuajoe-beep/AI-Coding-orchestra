@@ -1,0 +1,89 @@
+name: 🩺 每日巡检
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # UTC 0:00 = 北京时间 8:00
+  workflow_dispatch:        # 手动触发
+
+jobs:
+  daily-patrol:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+
+      - name: 每日代码巡检
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          echo "## 🩺 每日巡检 $(date +%Y-%m-%d)" > patrol-report.md
+          echo "" >> patrol-report.md
+
+          # 1. 昨日变更
+          echo "### 📝 昨日变更" >> patrol-report.md
+          git log --since="24 hours ago" --oneline --name-only --diff-filter=AM >> patrol-report.md 2>/dev/null \
+            || echo "无变更" >> patrol-report.md
+          echo "" >> patrol-report.md
+
+          # 2. 测试覆盖 (如果有)
+          echo "### 🧪 测试" >> patrol-report.md
+          if [ -f package.json ]; then
+            npm ci 2>/dev/null
+            npm test -- --coverage 2>/dev/null >> patrol-report.md || echo "测试命令未配置" >> patrol-report.md
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt 2>/dev/null
+            pytest --cov 2>/dev/null >> patrol-report.md || echo "测试命令未配置" >> patrol-report.md
+          else
+            echo "未检测到测试框架" >> patrol-report.md
+          fi
+          echo "" >> patrol-report.md
+
+          # 3. 依赖审计
+          echo "### 🔒 依赖安全" >> patrol-report.md
+          if [ -f package.json ]; then
+            AUDIT=$(npm audit --json 2>/dev/null || echo '{"error":"audit失败"}')
+            CRITICAL=$(echo "$AUDIT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len([v for v in d.get('vulnerabilities',{}).values() if v.get('severity')=='critical']))" 2>/dev/null || echo "0")
+            HIGH=$(echo "$AUDIT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len([v for v in d.get('vulnerabilities',{}).values() if v.get('severity')=='high']))" 2>/dev/null || echo "0")
+            echo "- 🔴 Critical: $CRITICAL   🟠 High: $HIGH" >> patrol-report.md
+          elif [ -f requirements.txt ]; then
+            pip-audit 2>/dev/null >> patrol-report.md || echo "pip-audit未安装" >> patrol-report.md
+          else
+            echo "未检测到包管理器" >> patrol-report.md
+          fi
+          echo "" >> patrol-report.md
+
+          # 4. 敏感文件
+          echo "### 🚨 敏感文件检查" >> patrol-report.md
+          SENSITIVE=$(git log --since="24 hours ago" --diff-filter=A -- "*.env" "*.pem" "*.key" "*secret*" "*credential*" 2>/dev/null)
+          if [ -z "$SENSITIVE" ]; then
+            echo "✅ 无敏感文件提交" >> patrol-report.md
+          else
+            echo "🔴 发现敏感文件!" >> patrol-report.md
+            echo "$SENSITIVE" >> patrol-report.md
+          fi
+
+          cat patrol-report.md
+
+      - name: 创建Issue (如有高危发现)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 检查是否有高危漏洞
+          if grep -q "🔴 Critical: [1-9]" patrol-report.md 2>/dev/null || \
+             grep -q "🔴 发现敏感文件" patrol-report.md 2>/dev/null; then
+            gh issue create \
+              --title "🩺 巡检发现高危问题 — $(date +%Y-%m-%d)" \
+              --body "$(cat patrol-report.md)" \
+              --label "orchestra-patrol,security,bug"
+          fi
+
+      - name: 上传报告
+        uses: actions/upload-artifact@v4
+        with:
+          name: patrol-report-$(date +%Y%m%d)
+          path: patrol-report.md

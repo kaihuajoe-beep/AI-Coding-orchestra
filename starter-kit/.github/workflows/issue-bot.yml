@@ -1,0 +1,119 @@
+name: 🤖 Issue Bot
+
+on:
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  auto-triage:
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI Issue 分类
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          # 基于关键词自动分类
+          TITLE_LOWER=$(echo "$ISSUE_TITLE" | tr '[:upper:]' '[:lower:]')
+          BODY_LOWER=$(echo "$ISSUE_BODY" | tr '[:upper:]' '[:lower:]')
+
+          # 确定类型
+          if echo "$TITLE_LOWER $BODY_LOWER" | grep -qE "bug|错误|崩溃|异常|crash|error|fail|broken"; then
+            TYPE="bug"
+          elif echo "$TITLE_LOWER $BODY_LOWER" | grep -qE "feature|功能|新增|添加|希望|建议|enhancement|request"; then
+            TYPE="enhancement"
+          elif echo "$TITLE_LOWER $BODY_LOWER" | grep -qE "doc|文档|readme|说明"; then
+            TYPE="documentation"
+          elif echo "$TITLE_LOWER $BODY_LOWER" | grep -qE "security|安全|漏洞|CVE|injection"; then
+            TYPE="security"
+          elif echo "$TITLE_LOWER $BODY_LOWER" | grep -qE "perf|性能|慢|慢速|slow|optimize"; then
+            TYPE="performance"
+          else
+            TYPE="question"
+          fi
+
+          # 确定优先级
+          if echo "$TITLE_LOWER $BODY_LOWER" | grep -qE "critical|紧急|线上|生产|crash|安全|security"; then
+            PRIORITY="P0"
+          elif echo "$TITLE_LOWER $BODY_LOWER" | grep -qE "重要|阻塞|blocked|high"; then
+            PRIORITY="P1"
+          else
+            PRIORITY="P2"
+          fi
+
+          # 添加标签
+          gh issue edit $ISSUE_NUMBER --add-label "$TYPE,$PRIORITY"
+
+          # 发布分类评论
+          CAN_AI_FIX=""
+          if [ "$TYPE" = "bug" ] && [ "$PRIORITY" != "P0" ]; then
+            CAN_AI_FIX="💡 此Bug适合AI自动修复。评论 \`/o maint bug-fix $ISSUE_NUMBER\` 或添加 \`ai-fix\` 标签启动自动修复。"
+          fi
+
+          gh issue comment $ISSUE_NUMBER --body "## 🤖 AI 自动分类
+
+| 属性 | 值 |
+|------|------|
+| 类型 | $TYPE |
+| 优先级 | $PRIORITY |
+
+$CAN_AI_FIX
+---
+*由 AI Coding 编排中台自动分类*"
+
+  auto-fix:
+    if: github.event.action == 'labeled' && github.event.label.name == 'ai-fix'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: AI 自动修复
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          BRANCH="ai-fix/$ISSUE_NUMBER-$(echo '$ISSUE_TITLE' | tr ' ' '-' | tr -cd 'a-zA-Z0-9-' | cut -c1-30)"
+          git checkout -b "$BRANCH"
+
+          echo "## 🤖 AI 自动修复中..." | gh issue comment $ISSUE_NUMBER --body-file -
+
+          # 安装依赖
+          if [ -f package.json ]; then npm ci 2>/dev/null; fi
+          if [ -f requirements.txt ]; then pip install -r requirements.txt 2>/dev/null; fi
+
+          # 尝试修复 (这里需要接入实际的AI修复逻辑)
+          # 通过环境变量传递Issue信息给AI工具
+          echo "Issue #$ISSUE_NUMBER: $ISSUE_TITLE"
+          echo "$ISSUE_BODY"
+
+          # 如果修复成功, 提交并创建PR
+          if git diff --quiet; then
+            echo "未检测到代码变更, 可能无法自动修复" | gh issue comment $ISSUE_NUMBER --body-file -
+          else
+            git add -A
+            git commit -m "fix: AI auto-fix #$ISSUE_NUMBER — $ISSUE_TITLE"
+            git push origin "$BRANCH"
+            gh pr create \
+              --title "🤖 AI Fix: $ISSUE_TITLE (Closes #$ISSUE_NUMBER)" \
+              --body "## 🤖 AI 自动修复
+
+**Issue**: #$ISSUE_NUMBER
+**描述**: $ISSUE_BODY
+
+自动修复由 AI Coding 编排中台执行。" \
+              --label "orchestra,ai-fix"
+            echo "✅ PR已创建" | gh issue comment $ISSUE_NUMBER --body-file -
+          fi

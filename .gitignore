@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (不提交API Key)
+*.env
+.env.*
+.envrc
+
+# MCP 运行时
+*.pid
+*.sock

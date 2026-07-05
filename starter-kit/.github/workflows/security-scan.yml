@@ -1,0 +1,87 @@
+name: 🔒 安全扫描
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # UTC 6:00 = 北京时间 14:00
+  pull_request:
+    types: [opened, synchronize]
+  workflow_dispatch:
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 密钥泄露扫描
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          config-path: .gitleaks.toml
+        continue-on-error: true
+
+      - name: Node.js 依赖审计
+        if: hashFiles('package.json') != ''
+        run: |
+          npm audit --json > npm-audit.json 2>/dev/null || true
+          if [ -f npm-audit.json ]; then
+            python3 -c "
+import json
+with open('npm-audit.json') as f:
+    data = json.load(f)
+vulns = data.get('vulnerabilities', {})
+critical = sum(1 for v in vulns.values() if v.get('severity')=='critical')
+high = sum(1 for v in vulns.values() if v.get('severity')=='high')
+print(f'npm: {critical} critical, {high} high')
+if critical > 0:
+    exit(1)
+"
+          fi
+
+      - name: Python 依赖审计
+        if: hashFiles('requirements.txt') != ''
+        run: |
+          pip install pip-audit 2>/dev/null
+          pip-audit --format json > pip-audit.json 2>/dev/null || true
+          if [ -f pip-audit.json ]; then
+            python3 -c "
+import json
+with open('pip-audit.json') as f:
+    data = json.load(f)
+critical = sum(1 for d in data.get('dependencies',[]) if d.get('vulns'))
+print(f'pip: {critical} vulnerable dependencies')
+if critical > 0:
+    exit(1)
+"
+          fi
+
+      - name: 创建安全Issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "🔒 安全扫描发现漏洞 — $(date +%Y-%m-%d)" \
+            --body "## 🔒 安全扫描报告
+
+          ### Node.js
+          $(cat npm-audit.json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(f\"- {k}: {v.get(\"severity\",\"?\")}\") for k,v in d.get(\"vulnerabilities\",{}).items()]' 2>/dev/null || echo 'N/A')
+
+          ### Python
+          $(cat pip-audit.json 2>/dev/null || echo 'N/A')
+
+          请立即处理高危漏洞。" \
+            --label "security,orchestra-patrol,P0"
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript,python
+      - uses: github/codeql-action/analyze@v3
