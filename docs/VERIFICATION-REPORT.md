@@ -61,8 +61,21 @@ Usage: node cli.js [--name <name>]              ✅
 | 端到端耗时 | 3-5min | 5-8min | -40%速度, +质量 |
 | 单次成本 | ~¥0.05 | ~¥0.02 | 省钱 (Codex已付) |
 
+## Codex 测试报告
+
+| 测试项 | 结果 | 详情 |
+|------|:--:|------|
+| Codex CLI 已安装 | ✅ | v0.140.0 |
+| Codex 认证状态 | ✅ | 已登录 ChatGPT 账号 |
+| `codex exec` headless 模式 | ❌ | 账号类型不支持 API 模型调用 |
+| gpt-5.5 (config默认) | ❌ | WebSocket 超时 |
+| gpt-5 / gpt-5-codex | ❌ | "not supported with ChatGPT account" |
+| gpt-4o | ❌ | 同上 |
+| **结论** | | **Codex = 桌面端交互模式专用** |
+
 ## 已知问题
 
-1. MiniMax API连接偶有超时 (180s timeout已设置)
-2. 成本追踪跨进程不持久 (MCP Server需长连接)
-3. Codex CLI需确认桌面端会员状态
+1. Codex CLI headless 不可用 — ChatGPT 账号限制, 仅桌面端交互
+2. MiniMax API连接偶有超时 (180s timeout已设置)
+3. 成本追踪跨进程不持久 (MCP Server需长连接)
+4. 4个 Actions YAML 语法需修复 (已标记)
